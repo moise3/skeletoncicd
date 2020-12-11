@@ -1,0 +1,38 @@
+{
+  "name": "outil-repo-modele",
+  "version": "1.0.0",
+  "description": "Ce module permet de creer une arborescence de repositoire git pour les projets de developpement à l'UQÀM",
+  "main": "index.js",
+  "bin": {
+    "outil-repo-modele": "./bin/index.js"
+  },
+  "scripts": {
+    "build": "babel index.js -d bin",
+    "start": "babel-node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "node",
+    "npm"
+  ],
+  "author": "kamgoue.moise@uqam.ca",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^2.4.2",
+    "change-case": "^3.1.0",
+    "commander": "^2.20.0",
+    "figlet": "^1.2.4",
+    "inquirer": "^6.5.2",
+    "lodash": "^4.17.11",
+    "shelljs": "^0.8.3"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.4.4",
+    "@babel/core": "^7.4.4",
+    "@babel/node": "^7.2.2",
+    "@babel/preset-env": "^7.4.4"
+  },
+  "directories": {
+    "lib": "lib"
+  }
+}

@@ -1,0 +1,101 @@
+pipeline {
+  agent {
+    node {
+      label 'master'
+    }
+  }
+
+  stages {
+    stage('Fetching credentials') {
+      steps{
+        script {
+          load("pipeline/Jenkins.params")
+        }
+        withCredentials([string(credentialsId:env.credentials, variable: 'TOKEN')]){
+          script{
+            def response = sh(script: "curl -H \"apikey: $TOKEN\" -H \"reason:Jenkins Build\" https://voute.uqam.ca:9119/api/searchpasswords/${env.passwordlistid}?title=${env.passwordtitle}", returnStdout: true)
+            def parsedResponse = readJSON text: response
+            ssh_key_public=parsedResponse[0].GenericField1
+            ssh_key_private=parsedResponse[0].GenericField2
+          }
+        }
+      }
+    }
+    stage('Building docker image ') {
+      steps {
+        withCredentials(
+          [
+            dockerCert(credentialsId: 'DockerHost-Chaland', variable: 'DOCKER_CERT_PATH'),
+            [$class: 'UsernamePasswordMultiBinding', credentialsId: 'Docker', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']
+          ]) {
+          script {
+            // DEBUG:
+            // print("SSH_KEY in build stage: $ssh_key_public")
+            DOCKER_CMD = sh(script: "echo docker -H chaland.si.uqam.ca --tls --tlscacert=${DOCKER_CERT_PATH}/ca.pem --tlscert=${DOCKER_CERT_PATH}/cert.pem --tlskey=${DOCKER_CERT_PATH}/key.pem", returnStdout: true).trim()
+            // check si l'image existe
+            IMAGE_ID = sh(script: "${DOCKER_CMD} images | grep ${env.registry}:${env.tag} | awk '{print \$3}'", returnStdout: true).trim()
+            // check si le containner existe
+            DOCKER_ID = sh(script: "${DOCKER_CMD} ps --filter name='${env.dockername}' | grep ${env.dockername} | awk '{print \$1}'", returnStdout: true).trim()
+          }
+
+          print 'Build de la nouvelle image...'
+          script {
+            if (IMAGE_ID == '') {
+              // si l\'image n\'existe pas build la
+              sh "${DOCKER_CMD} build -t ${env.registry}:${env.tag} -f build/Dockerfile ."
+            }else {
+              print "${IMAGE_ID}"
+            }
+          }
+        }
+      }
+    }
+
+    stage('Upload image on dockerhub') {
+      steps {
+        withCredentials(
+          [
+            dockerCert(credentialsId: 'DockerHost-Chaland', variable: 'DOCKER_CERT_PATH'),
+            [$class: 'UsernamePasswordMultiBinding', credentialsId: 'Docker', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']
+          ]
+        ) {
+            script {
+              DOCKER_CMD = sh(script: "echo docker -H chaland.si.uqam.ca --tls --tlscacert=${DOCKER_CERT_PATH}/ca.pem --tlscert=${DOCKER_CERT_PATH}/cert.pem --tlskey=${DOCKER_CERT_PATH}/key.pem", returnStdout: true).trim()
+            }
+
+            print 'Uploading image .....'
+            script {
+              sh "${DOCKER_CMD} login -u $USERNAME -p $PASSWORD"
+              sh "${DOCKER_CMD} push ${env.registry}:${env.tag}"
+              sh "${DOCKER_CMD} logout"
+            }
+        }
+      }
+    }
+
+    stage('Check Kubernetes environments') {
+      steps {
+        load "pipeline/Jenkins.params"
+        withCredentials(
+          [
+            dockerCert(credentialsId: 'DockerHost-Chaland', variable: 'DOCKER_CERT_PATH'),
+            kubeconfigContent(credentialsId: "${env.kubeconfig}", variable: 'KUBECONFIG_CONTENT')
+          ]
+        ) {
+          print 'Preparation du kubeconfig...'
+          script {
+            def kubectl = "kubectl  --kubeconfig=\"${KUBECONFIG_CONTENT}\""
+            sh "rm -rf kube && mkdir kube && echo \"${KUBECONFIG_CONTENT}\" > kube/config"
+            DOCKER_CMD = sh(script: "echo docker -H chaland.si.uqam.ca --tls --tlscacert=${DOCKER_CERT_PATH}/ca.pem --tlscert=${DOCKER_CERT_PATH}/cert.pem --tlskey=${DOCKER_CERT_PATH}/key.pem", returnStdout: true).trim()
+            sh "${DOCKER_CMD} run --name helm --rm -d dtzar/helm-kubectl:2.9.1 sleep 30"
+            sh "${DOCKER_CMD} cp kube helm:/root/.kube"
+            sh "${DOCKER_CMD} cp deploy helm:/root"
+            sh "${DOCKER_CMD} exec helm ls"
+            sh "${DOCKER_CMD} exec helm helm install -f /root/deploy/values.yaml -f /root/deploy/${env.BRANCH_NAME}.yaml --namespace=${env.namespace} --name ${env.helmname} /root/deploy || ${DOCKER_CMD} exec helm helm upgrade --install --recreate-pods -f /root/deploy/values.yaml -f /root/deploy/${env.BRANCH_NAME}.yaml --namespace=${env.namespace} ${env.helmname} /root/deploy"
+            sh "rm -rf kube"
+          }
+        }
+      }
+    }
+  }
+}
